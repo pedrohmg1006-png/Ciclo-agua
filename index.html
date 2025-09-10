@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitoramento de Água - Arduino</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: linear-gradient(135deg, #4facfe, #00f2fe);
+      color: #333;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 15px;
+      box-shadow: 0 8px 15px rgba(0,0,0,0.2);
+      width: 90%;
+      max-width: 800px;
+      text-align: center;
+      transition: background 0.5s;
+    }
+    h1 {
+      color: #0077b6;
+    }
+    .water-data {
+      margin: 20px 0;
+      font-size: 2em;
+      font-weight: bold;
+      color: #023e8a;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 20px;
+      background: #ddd;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+    .progress {
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, #0077b6, #00b4d8);
+      transition: width 0.5s;
+    }
+    button {
+      background: #00b4d8;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.3s;
+      margin-top: 15px;
+    }
+    button:hover {
+      background: #0077b6;
+    }
+    canvas {
+      margin-top: 25px;
+    }
+    .alerta {
+      background: #ff4d4d !important;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <div class="container" id="painel">
+    <h1>💧 Monitoramento de Água</h1>
+    <p>Quantidade de água gasta:</p>
+    <div class="water-data" id="waterValue">0 L</div>
+
+    <div class="progress-bar">
+      <div class="progress" id="progressBar"></div>
+    </div>
+
+    <p id="status">Clique em "Conectar ao Arduino".</p>
+    <button onclick="connectSerial()">Conectar ao Arduino</button>
+
+    <canvas id="waterChart" height="120"></canvas>
+  </div>
+
+  <script>
+    let consumo = 0;
+    let tempo = 0;
+    const limite = 50; // 🚨 limite em litros
+    let alertaTocado = false; // evita tocar o som sem parar
+
+    // Inicializa o gráfico
+    const ctx = document.getElementById('waterChart').getContext('2d');
+    const waterChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Consumo de Água (L)',
+          data: [],
+          borderColor: '#0077b6',
+          backgroundColor: 'rgba(0, 183, 255, 0.3)',
+          fill: true,
+          tension: 0.3
+        }]
+      },
+      options: {
+        responsive: true,
+        scales: {
+          x: {
+            title: { display: true, text: 'Tempo (s)' }
+          },
+          y: {
+            beginAtZero: true,
+            title: { display: true, text: 'Litros' }
+          }
+        }
+      }
+    });
+
+    // Função para tocar um bip
+    function tocarAlerta() {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.type = 'sine'; // tipo do som
+      oscillator.frequency.setValueAtTime(800, audioCtx.currentTime); // frequência em Hz
+      gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.5); // dura 0.5s
+    }
+
+    function atualizarTela(valor) {
+      const waterValue = document.getElementById("waterValue");
+      const progressBar = document.getElementById("progressBar");
+      const status = document.getElementById("status");
+      const painel = document.getElementById("painel");
+
+      waterValue.textContent = valor.toFixed(2) + " L";
+      progressBar.style.width = Math.min(valor * 2, 100) + "%"; 
+      
+      if (valor >= limite) {
+        painel.classList.add("alerta");
+        status.textContent = "⚠️ Alerta! Consumo acima do limite de " + limite + " L!";
+        
+        if (!alertaTocado) {
+          tocarAlerta();
+          alertaTocado = true;
+        }
+      } else {
+        painel.classList.remove("alerta");
+        status.textContent = "Dados recebidos do Arduino ✅";
+        alertaTocado = false; // libera o bip para quando passar do limite de novo
+      }
+
+      // Atualiza o gráfico
+      tempo++;
+      waterChart.data.labels.push(tempo + "s");
+      waterChart.data.datasets[0].data.push(valor);
+      waterChart.update();
+    }
+
+    async function connectSerial() {
+      try {
+        const port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 9600 });
+
+        const decoder = new TextDecoderStream();
+        port.readable.pipeTo(decoder.writable);
+        const reader = decoder.readable.getReader();
+
+        document.getElementById("status").textContent = "Conectado! Aguardando dados...";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (value) {
+            const numero = parseFloat(value);
+            if (!isNaN(numero)) {
+              consumo = numero;
+              atualizarTela(consumo);
+            }
+          }
+        }
+      } catch (err) {
+        document.getElementById("status").textContent = "Erro: " + err;
+      }
+    }
+  </script>
+</body>
+</html>
